@@ -12,6 +12,7 @@ import com.hazelcast.jet.pipeline.ServiceFactories;
 import com.hazelcast.jet.pipeline.ServiceFactory;
 import com.hazelcast.jet.pipeline.Sink;
 import com.hazelcast.jet.pipeline.StreamSource;
+import com.hazelcast.jet.pipeline.StreamStage;
 import org.apache.http.HttpHost;
 import org.elasticsearch.action.DocWriteRequest;
 import org.elasticsearch.action.update.UpdateRequest;
@@ -39,6 +40,11 @@ import static java.util.Collections.emptyList;
 public class PetClinicIndexJob implements Serializable {
 
     private static final String DATABASE = "petclinic";
+
+    private static final String OWNERS_TABLE = "owners";
+    private static final String PETS_TABLE = "pets";
+    private static final String VISITS_TABLE = "visits";
+
     private static final String[] TABLES = {"petclinic.owners", "petclinic.pets", "petclinic.visits"};
 
     @Option(names = {"-a", "--database-address"}, description = "database address")
@@ -82,12 +88,75 @@ public class PetClinicIndexJob implements Serializable {
         );
 
         Pipeline p = Pipeline.create();
-        p.readFrom(mysqlSource)
-         .withoutTimestamps()
-         .mapUsingService(keywordService, PetClinicIndexJob::enrichWithKeywords)
-         .groupingKey(tuple2 -> 0L)
-         .mapStateful(DocumentMappingState::new, DocumentMappingState::mapChange)
-         .writeTo(elasticSink);
+        StreamStage<Object> allRecords =
+                p.readFrom(mysqlSource)
+                 .withoutTimestamps()
+                 .map((change) -> {
+                     Map<String, Object> changeMap = change.value().toMap();
+
+                     switch (change.table()) {
+                         case OWNERS_TABLE: {
+                             Integer ownerId = (Integer) changeMap.get("id");
+                             String firstName = (String) changeMap.get("first_name");
+                             String lastName = (String) changeMap.get("last_name");
+
+                             return new Owner(ownerId, firstName, lastName);
+                         }
+
+                         case PETS_TABLE: {
+                             Integer petId = (Integer) changeMap.get("id");
+                             String name = (String) changeMap.get("name");
+                             Integer ownerId = (Integer) changeMap.get("owner_id");
+
+                             return new Pet(petId, name, ownerId);
+                         }
+
+                         case VISITS_TABLE:
+                             Integer petId = (Integer) changeMap.get("pet_id");
+                             String description = (String) changeMap.get("description");
+
+                             return new Visit(petId, description);
+
+                         default:
+                             throw new IllegalStateException("Unknown table " + change.table());
+                     }
+
+                 });
+
+        StreamStage<Object> owners = allRecords.filter(o -> o instanceof Owner);
+        StreamStage<Object> petsAndVisits = allRecords.filter(o -> !(o instanceof Owner));
+
+        StreamStage<Tuple2<Pet, Collection<Visit>>> petToVisit = petsAndVisits.groupingKey(o -> {
+            if (o instanceof Pet) {
+                Pet pet = (Pet) o;
+                return Long.valueOf(pet.id);
+            } else if (o instanceof Visit) {
+                Visit visit = (Visit) o;
+                return Long.valueOf(visit.petId);
+            } else {
+                throw new IllegalArgumentException("Unknown type " + o.getClass());
+            }
+        }).mapStateful(() -> new OneToManyMapper<Pet, Visit>(Pet.class, Visit.class), OneToManyMapper::mapState);
+
+        StreamStage<Object> ownersAndPets = owners.merge(petToVisit);
+
+        StreamStage<Tuple2<Owner, Collection<Tuple2<Pet, Collection<Visit>>>>> result =
+                ownersAndPets.groupingKey(
+                        o -> {
+                            if (o instanceof Owner) {
+                                Owner owner = (Owner) o;
+                                return Long.valueOf(owner.ownerId);
+                            } else if (o instanceof Tuple2) {
+                                Tuple2<Pet, Collection<Visit>> tuple2 = (Tuple2) o;
+                                return Long.valueOf(tuple2.f0().ownerId);
+                            } else {
+                                throw new IllegalArgumentException("Unknown type " + o.getClass());
+                            }
+                        }).mapStateful(
+                        () -> new OneToManyMapper<Owner, Tuple2<Pet, Collection<Visit>>>(Owner.class,
+                                Tuple2.class)
+                        ,
+                        OneToManyMapper::mapState);
 
         return p;
     }
@@ -120,9 +189,7 @@ public class PetClinicIndexJob implements Serializable {
 
     static class DocumentMappingState implements Serializable {
 
-        private static final String OWNERS_TABLE = "owners";
-        private static final String PETS_TABLE = "pets";
-        private static final String VISITS_TABLE = "visits";
+
         Map<Integer, Document> ownerMap = new HashMap<>();
         Map<Integer, Document> petMap = new HashMap<>();
 
@@ -249,14 +316,38 @@ public class PetClinicIndexJob implements Serializable {
         }
     }
 
+    static class Owner {
+
+        public Integer ownerId;
+        public String firstName;
+        public String lastName;
+
+        public Owner(Integer ownerId, String firstName, String lastName) {
+            this.ownerId = ownerId;
+            this.firstName = firstName;
+            this.lastName = lastName;
+        }
+
+        @Override public String toString() {
+            return "Owner{" +
+                    "ownerId=" + ownerId +
+                    ", firstName='" + firstName + '\'' +
+                    ", lastName='" + lastName + '\'' +
+                    '}';
+        }
+    }
+
     static class Pet {
 
+
         public Integer id;
+        public Integer ownerId;
         public String name;
 
-        public Pet(Integer id, String name) {
+        public Pet(Integer id, String name, Integer ownerId) {
             this.id = id;
             this.name = name;
+            this.ownerId = ownerId;
         }
 
         @Override
@@ -264,6 +355,24 @@ public class PetClinicIndexJob implements Serializable {
             return "Pet{" +
                     "id=" + id +
                     ", name='" + name + '\'' +
+                    '}';
+        }
+    }
+
+    static class Visit {
+        public Integer petId;
+        public String description;
+        public List<String> keywords;
+
+        public Visit(Integer petId, String description) {
+
+        }
+
+        @Override public String toString() {
+            return "Visit{" +
+                    "petId=" + petId +
+                    ", description='" + description + '\'' +
+                    ", keywords=" + keywords +
                     '}';
         }
     }
