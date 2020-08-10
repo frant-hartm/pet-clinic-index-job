@@ -41,6 +41,7 @@ public class OneToManyMapper<T, U> {
                     for (U oneOfMany : many) {
                         mergeFn.accept(one, oneOfMany);
                     }
+                    idToMany.remove(key);
                     return one;
                 }
 

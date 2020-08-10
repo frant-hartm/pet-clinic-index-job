@@ -151,8 +151,8 @@ public class PetClinicIndexJobTest extends JetTestSupport {
                    Map<String, Object> source = hit.getSourceAsMap();
                    assertThat(source)
                            .contains(
-                                   entry("firstName", "George"),
-                                   entry("lastName", "Franklin")
+                                   entry("first_name", "George"),
+                                   entry("last_name", "Franklin")
                            );
                });
     }

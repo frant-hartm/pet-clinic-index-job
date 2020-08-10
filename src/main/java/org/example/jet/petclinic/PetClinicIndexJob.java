@@ -1,5 +1,7 @@
 package org.example.jet.petclinic;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.hazelcast.function.PredicateEx;
 import com.hazelcast.jet.cdc.ChangeRecord;
 import com.hazelcast.jet.cdc.ParsingException;
 import com.hazelcast.jet.cdc.mysql.MySqlCdcSources;
@@ -60,31 +62,7 @@ public class PetClinicIndexJob implements Serializable {
     @Option(names = {"-i", "--elastic-index"}, description = "elastic index")
     private String elasticIndex;
 
-    private static Long getPetId(Object o) {
-        if (o instanceof Pet) {
-            Pet pet = (Pet) o;
-            return Long.valueOf(pet.id);
-        } else if (o instanceof Visit) {
-            Visit visit = (Visit) o;
-            return Long.valueOf(visit.petId);
-        } else {
-            throw new IllegalArgumentException("Unknown type " + o.getClass());
-        }
-    }
-
-    private static Long getOwnerId(Object o) {
-        if (o instanceof Owner) {
-            Owner owner = (Owner) o;
-            return Long.valueOf(owner.ownerId);
-        } else if (o instanceof Pet) {
-            Pet pet = (Pet) o;
-            return Long.valueOf(pet.ownerId);
-        } else {
-            throw new IllegalArgumentException("Unknown type " + o.getClass());
-        }
-    }
-
-    public Pipeline pipeline() {
+    public Pipeline pipeline() throws ParsingException {
         StreamSource<ChangeRecord> mysqlSource = MySqlCdcSources
                 .mysql("mysql")
                 .setDatabaseAddress(databaseAddress)
@@ -104,21 +82,32 @@ public class PetClinicIndexJob implements Serializable {
         );
 
         Pipeline p = Pipeline.create();
-        StreamStage<Object> allRecords =
-                p.readFrom(mysqlSource)
-                 .withoutTimestamps()
-                 .map(PetClinicIndexJob::mapChangeRecordToPOJO)
-                 .mapUsingService(keywordService, PetClinicIndexJob::enrichWithKeywords);
+        StreamStage<ChangeRecord> allRecords = p.readFrom(mysqlSource)
+                                                .withoutTimestamps();
 
-        StreamStage<Pet> petWithVisits = allRecords
-                .filter(o1 -> !(o1 instanceof Owner)) // Pets and Visits
-                .groupingKey(PetClinicIndexJob::getPetId)
-                .mapStateful(
-                        () -> new OneToManyMapper<>(Pet.class, Visit.class, Pet::updateFrom, Pet::addVisit),
-                        OneToManyMapper::mapState
-                );
+        var pets = allRecords.filter(table(PETS_TABLE))
+                             .map(change -> (Object) change.value().toObject(Pet.class))
+                             .peek();
 
-        allRecords.filter(o -> o instanceof Owner)
+        var visits = allRecords.filter(table(VISITS_TABLE))
+                               .map(change -> change.value().toObject(Visit.class))
+                               .mapUsingService(keywordService, PetClinicIndexJob::enrichWithKeywords)
+                .peek();
+
+        StreamStage<Pet> petWithVisits = pets.merge(visits)
+                                             .groupingKey(PetClinicIndexJob::getPetId)
+                                             .mapStateful(
+                                                     () -> new OneToManyMapper<>(Pet.class,
+                                                             Visit.class,
+                                                             Pet::updateFrom,
+                                                             Pet::addVisit),
+                                                     OneToManyMapper::mapState
+                                             );
+
+
+        allRecords.filter(table(OWNERS_TABLE))
+                  .map(change -> (Object) change.value().toObject(Owner.class))
+                  .peek()
                   .merge(petWithVisits)
                   .groupingKey(PetClinicIndexJob::getOwnerId)
                   .mapStateful(
@@ -131,72 +120,68 @@ public class PetClinicIndexJob implements Serializable {
         return p;
     }
 
-    private static Object mapChangeRecordToPOJO(ChangeRecord change) throws ParsingException {
-        Map<String, Object> changeMap = change.value().toMap();
-
-        switch (change.table()) {
-            case OWNERS_TABLE: {
-                Integer ownerId = (Integer) changeMap.get("id");
-                String firstName = (String) changeMap.get("first_name");
-                String lastName = (String) changeMap.get("last_name");
-
-                return new Owner(ownerId, firstName, lastName);
-            }
-
-            case PETS_TABLE: {
-                Integer petId = (Integer) changeMap.get("id");
-                String name = (String) changeMap.get("name");
-                Integer ownerId = (Integer) changeMap.get("owner_id");
-
-                return new Pet(petId, name, ownerId);
-            }
-
-            case VISITS_TABLE:
-                Integer petId = (Integer) changeMap.get("pet_id");
-                String description = (String) changeMap.get("description");
-
-                return new Visit(petId, description);
-
-            default:
-                throw new IllegalStateException("Unknown table " + change.table());
-        }
-
-    }
-
-    private static Object enrichWithKeywords(Rake service, Object object) {
-
-        if (object instanceof Visit) {
-            Visit visit = (Visit) object;
-
-            LinkedHashMap<String, Double> keywordsFromText = service.getKeywordsFromText(visit.description);
-            List<String> keywords = keywordsFromText.keySet()
-                                                    .stream()
-                                                    .limit(5)
-                                                    .collect(Collectors.toList());
-            visit.setKeywords(keywords);
-        }
-        return object;
+    private static PredicateEx<ChangeRecord> table(String table) throws ParsingException {
+        return (changeRecord) -> changeRecord.table().equals(table);
     }
 
     private DocWriteRequest<?> mapDocumentToElasticRequest(Owner document) throws Exception {
-        return new UpdateRequest(elasticIndex, document.ownerId.toString())
+        return new UpdateRequest(elasticIndex, document.id.toString())
                 .doc(JsonUtil.toJson(document), XContentType.JSON)
                 .docAsUpsert(true);
+    }
+
+    private static Visit enrichWithKeywords(Rake service, Visit visit) {
+        LinkedHashMap<String, Double> keywordsFromText = service.getKeywordsFromText(visit.description);
+        List<String> keywords = keywordsFromText.keySet()
+                                                .stream()
+                                                .limit(5)
+                                                .collect(Collectors.toList());
+        visit.setKeywords(keywords);
+        return visit;
+    }
+
+
+    private static Long getPetId(Object o) {
+        if (o instanceof Pet) {
+            Pet pet = (Pet) o;
+            return Long.valueOf(pet.id);
+        } else if (o instanceof Visit) {
+            Visit visit = (Visit) o;
+            return Long.valueOf(visit.petId);
+        } else {
+            throw new IllegalArgumentException("Unknown type " + o.getClass());
+        }
+    }
+
+    private static Long getOwnerId(Object o) {
+        if (o instanceof Owner) {
+            Owner owner = (Owner) o;
+            return Long.valueOf(owner.id);
+        } else if (o instanceof Pet) {
+            Pet pet = (Pet) o;
+            return Long.valueOf(pet.ownerId);
+        } else {
+            throw new IllegalArgumentException("Unknown type " + o.getClass());
+        }
     }
 
 
     public static class Owner implements Serializable {
 
-        public Integer ownerId;
+        public Integer id;
+
+        @JsonProperty("first_name")
         public String firstName;
+
+        @JsonProperty("last_name")
         public String lastName;
         public List<Pet> pets;
 
         public Owner() {
         }
 
-        public Owner(Integer ownerId, String firstName, String lastName) {
-            this.ownerId = ownerId;
+        public Owner(Integer id, String firstName, String lastName) {
+            this.id = id;
             this.firstName = firstName;
             this.lastName = lastName;
         }
@@ -223,7 +208,7 @@ public class PetClinicIndexJob implements Serializable {
         @Override
         public String toString() {
             return "Owner{" +
-                    "ownerId=" + ownerId +
+                    "ownerId=" + id +
                     ", firstName='" + firstName + '\'' +
                     ", lastName='" + lastName + '\'' +
                     ", petNames=" + pets +
@@ -233,8 +218,12 @@ public class PetClinicIndexJob implements Serializable {
 
     static class Pet {
 
+
         public Integer id;
+
+        @JsonProperty("owner_id")
         public Integer ownerId;
+
         public String name;
 
         public List<Visit> visits;
@@ -271,9 +260,13 @@ public class PetClinicIndexJob implements Serializable {
 
     static class Visit {
 
+        @JsonProperty("pet_id")
         public Integer petId;
         public String description;
         public List<String> keywords;
+
+        public Visit() {
+        }
 
         public Visit(Integer petId, String description) {
             this.petId = petId;
