@@ -207,7 +207,9 @@ public class PetClinicIndexJobTest extends JetTestSupport {
                    SearchHit hit = hits.getAt(0);
                    Map<String, Object> source = hit.getSourceAsMap();
 
-                   assertThat((List<String>) source.get("keywords")).isNotEmpty();
+                   List pets = (List) source.get("pets");
+                   List visits = (List) ((Map<String, Object>) pets.get(0)).get("visits");
+                   assertThat(visits).isNotEmpty();
                });
     }
 
