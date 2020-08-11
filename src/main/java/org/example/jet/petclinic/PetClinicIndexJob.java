@@ -3,7 +3,6 @@ package org.example.jet.petclinic;
 import com.hazelcast.jet.cdc.ChangeRecord;
 import com.hazelcast.jet.cdc.ParsingException;
 import com.hazelcast.jet.cdc.mysql.MySqlCdcSources;
-import com.hazelcast.jet.datamodel.Tuple2;
 import com.hazelcast.jet.elastic.ElasticSinks;
 import com.hazelcast.jet.json.JsonUtil;
 import com.hazelcast.jet.picocli.CommandLine.Option;
@@ -17,21 +16,17 @@ import org.elasticsearch.action.DocWriteRequest;
 import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.common.xcontent.XContentType;
+import org.example.jet.petclinic.model.Owner;
+import org.example.jet.petclinic.model.Pet;
+import org.example.jet.petclinic.model.Visit;
 import org.example.jet.petclinic.rake.Rake;
 
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
-
-import static com.hazelcast.jet.datamodel.Tuple2.tuple2;
-import static java.util.Collections.emptyList;
 
 /**
  *
@@ -39,7 +34,12 @@ import static java.util.Collections.emptyList;
 public class PetClinicIndexJob implements Serializable {
 
     private static final String DATABASE = "petclinic";
-    private static final String[] TABLES = {"petclinic.owners", "petclinic.pets", "petclinic.visits"};
+
+    private static final String OWNERS_TABLE = "owners";
+    private static final String PETS_TABLE = "pets";
+    private static final String VISITS_TABLE = "visits";
+
+    private static final String[] TABLE_WHITELIST = {"petclinic.owners", "petclinic.pets", "petclinic.visits"};
 
     @Option(names = {"-a", "--database-address"}, description = "database address")
     private String databaseAddress;
@@ -64,19 +64,19 @@ public class PetClinicIndexJob implements Serializable {
 
     public Pipeline pipeline() {
         StreamSource<ChangeRecord> mysqlSource = MySqlCdcSources
-                .mysql("mysql")
+                .mysql("mysql-debezium")
                 .setDatabaseAddress(databaseAddress)
                 .setDatabasePort(databasePort)
                 .setDatabaseUser(databaseUser)
                 .setDatabasePassword(databasePassword)
                 .setClusterName(clusterName)
                 .setDatabaseWhitelist(DATABASE)
-                .setTableWhitelist(TABLES)
+                .setTableWhitelist(TABLE_WHITELIST)
                 .build();
 
         ServiceFactory<?, Rake> keywordService = ServiceFactories.sharedService((context) -> new Rake("en"));
 
-        Sink<Document> elasticSink = ElasticSinks.elastic(
+        Sink<Owner> elasticSink = ElasticSinks.elastic(
                 () -> RestClient.builder(HttpHost.create(elasticHost)),
                 this::mapDocumentToElasticRequest
         );
@@ -84,108 +84,125 @@ public class PetClinicIndexJob implements Serializable {
         Pipeline p = Pipeline.create();
         p.readFrom(mysqlSource)
          .withoutTimestamps()
-         .mapUsingService(keywordService, PetClinicIndexJob::enrichWithKeywords)
-         .groupingKey(tuple2 -> 0L)
-         .mapStateful(DocumentMappingState::new, DocumentMappingState::mapChange)
+         .map(PetClinicIndexJob::mapChangeRecordToPOJO).setName("mapChangeRecordToPOJO")
+         .mapUsingService(keywordService, PetClinicIndexJob::enrichWithKeywords).setName("enrichWithKeywords")
+         .mapStateful(OwnerMappingState::new, OwnerMappingState::mapState).setName("OwnerMappingState::mapState")
          .writeTo(elasticSink);
 
         return p;
     }
 
-    private static Tuple2<ChangeRecord, List<String>> enrichWithKeywords(
-            Rake service,
-            ChangeRecord change
-    ) throws ParsingException {
+    private static Object mapChangeRecordToPOJO(ChangeRecord change) throws ParsingException {
+        Map<String, Object> changeMap = change.value().toMap();
 
-        Map<String, Object> map = change.value().toMap();
-        Object desc = map.get("description");
-        if (desc instanceof String) {
-            String description = (String) desc;
-            LinkedHashMap<String, Double> keywordsFromText = service.getKeywordsFromText(description);
+        switch (change.table()) {
+            case OWNERS_TABLE: {
+                Integer ownerId = (Integer) changeMap.get("id");
+                String firstName = (String) changeMap.get("first_name");
+                String lastName = (String) changeMap.get("last_name");
+
+                return new Owner(ownerId, firstName, lastName);
+            }
+
+            case PETS_TABLE: {
+                Integer petId = (Integer) changeMap.get("id");
+                String name = (String) changeMap.get("name");
+                Integer ownerId = (Integer) changeMap.get("owner_id");
+
+                return new Pet(petId, name, ownerId);
+            }
+
+            case VISITS_TABLE:
+                Integer petId = (Integer) changeMap.get("pet_id");
+                String description = (String) changeMap.get("description");
+
+                return new Visit(petId, description);
+
+            default:
+                throw new IllegalStateException("Unknown table " + change.table());
+        }
+
+    }
+
+    private static Object enrichWithKeywords(Rake service, Object item) {
+        if (item instanceof Visit) {
+            Visit visit = (Visit) item;
+
+            LinkedHashMap<String, Double> keywordsFromText = service.getKeywordsFromText(visit.description);
             List<String> keywords = keywordsFromText.keySet()
                                                     .stream()
                                                     .limit(5)
                                                     .collect(Collectors.toList());
-            return tuple2(change, keywords);
-        } else {
-            return tuple2(change, emptyList());
+
+            visit.setKeywords(keywords);
+
         }
+        return item;
     }
 
-    private DocWriteRequest<?> mapDocumentToElasticRequest(Document document) throws Exception {
-        return new UpdateRequest(elasticIndex, document.ownerId.toString())
+    private DocWriteRequest<?> mapDocumentToElasticRequest(Owner document) throws Exception {
+        return new UpdateRequest(elasticIndex, document.id.toString())
                 .doc(JsonUtil.toJson(document), XContentType.JSON)
                 .docAsUpsert(true);
     }
 
-    static class DocumentMappingState implements Serializable {
+    static class OwnerMappingState implements Serializable {
 
-        private static final String OWNERS_TABLE = "owners";
-        private static final String PETS_TABLE = "pets";
-        private static final String VISITS_TABLE = "visits";
-        Map<Integer, Document> ownerMap = new HashMap<>();
-        Map<Integer, Document> petMap = new HashMap<>();
+        Map<Integer, Owner> ownerMap = new HashMap<>();
+        Map<Integer, Owner> petMap = new HashMap<>();
 
-        public Document mapChange(Long ignored, Tuple2<ChangeRecord, List<String>> changeKeywordsTuple2) throws Exception {
-            ChangeRecord change = changeKeywordsTuple2.f0();
-            List<String> keywords = changeKeywordsTuple2.f1();
+        Map<Integer, Pet> petIdToPetMap = new HashMap<>();
 
-            Map<String, Object> changeMap = change.value().toMap();
-            switch (change.table()) {
-                case OWNERS_TABLE: {
-                    Integer ownerId = (Integer) changeMap.get("id");
+        public Owner mapState(Object item) {
 
-                    Document document = getDocument(ownerId);
-                    document.updateName(changeMap);
+            if (item instanceof Owner) {
+                Owner owner = (Owner) item;
 
-                    return document;
+                return ownerMap.compute(owner.id, (key, currentOwner) -> {
+                    if (currentOwner == null) {
+                        return owner;
+                    } else {
+                        currentOwner.updateFrom(owner);
+                        return currentOwner;
+                    }
+                });
+
+            } else if (item instanceof Pet) {
+                Pet pet = (Pet) item;
+
+                Pet currentPet = petIdToPetMap.compute(pet.id, (key, aPet) -> {
+                    if (aPet == null) {
+                        return pet;
+                    } else {
+                        aPet.updateFrom(pet);
+                        return aPet;
+                    }
+                });
+
+                Owner owner = ownerMap.computeIfAbsent(currentPet.ownerId, key1 -> new Owner());
+                owner.id = currentPet.ownerId;
+                owner.addPet(currentPet);
+
+                petMap.putIfAbsent(pet.id, owner);
+
+                return documentIfOwnerSet(owner);
+            } else if (item instanceof Visit) {
+                Visit visit = (Visit) item;
+
+                Pet pet = petIdToPetMap.computeIfAbsent(visit.petId, key -> new Pet(visit.petId));
+                pet.addVisit(visit);
+
+                if (pet.ownerId != null) {
+                    return ownerMap.get(pet.ownerId);
+                } else {
+                    return null;
                 }
-
-                case PETS_TABLE: {
-                    Integer ownerId = (Integer) changeMap.get("owner_id");
-
-                    Document document = getDocument(ownerId);
-                    document.addPet(changeMap);
-
-                    Integer petId = (Integer) changeMap.get("id");
-                    addPet(petId, document);
-
-                    return documentIfOwnerSet(document);
-                }
-
-                case VISITS_TABLE:
-                    Integer petId = (Integer) changeMap.get("pet_id");
-
-                    Document document = getDocumentByPet(petId);
-                    document.addKeywords(keywords);
-
-                    return documentIfOwnerSet(document);
-
-                default:
-                    throw new IllegalStateException("Unknown table " + change.table());
+            } else {
+                throw new IllegalArgumentException("Unknown type " + item.getClass());
             }
         }
 
-        private Document getDocument(Integer ownerId) {
-            Document document = ownerMap.computeIfAbsent(ownerId, Document::new);
-            document.ownerId = ownerId;
-            return document;
-        }
-
-        private void addPet(Integer petId, Document document) {
-            petMap.compute(petId, (pId, existingDoc) -> {
-                if (existingDoc != null) {
-                    document.addKeywords(existingDoc.keywords);
-                }
-                return document;
-            });
-        }
-
-        private Document getDocumentByPet(Integer petId) {
-            return petMap.computeIfAbsent(petId, id -> new Document());
-        }
-
-        private Document documentIfOwnerSet(Document document) {
+        private Owner documentIfOwnerSet(Owner document) {
             if (document.firstName == null) {
                 //
                 return null;
@@ -195,76 +212,4 @@ public class PetClinicIndexJob implements Serializable {
         }
     }
 
-    public static class Document implements Serializable {
-
-        public Integer ownerId;
-        public String firstName;
-        public String lastName;
-        public List<Pet> pets;
-        public Set<String> keywords;
-
-        public Document() {
-        }
-
-        public Document(Integer ownerId) {
-            this.ownerId = ownerId;
-        }
-
-        public void updateName(Map<String, Object> changeMap) {
-            firstName = (String) changeMap.get("first_name");
-            lastName = (String) changeMap.get("last_name");
-        }
-
-        public void addPet(Map<String, Object> changeMap) {
-            Pet newPet = new Pet((Integer) changeMap.get("id"), (String) changeMap.get("name"));
-
-            if (pets == null) {
-                pets = new ArrayList<>();
-            }
-            for (Pet pet : pets) {
-                if (pet.id.equals(newPet.id)) {
-                    pet.name = newPet.name;
-                    return;
-                }
-            }
-            pets.add(newPet);
-        }
-
-        public void addKeywords(Collection<String> keywords) {
-            if (this.keywords == null) {
-                this.keywords = new HashSet<>();
-            }
-            this.keywords.addAll(keywords);
-        }
-
-        @Override
-        public String toString() {
-            return "Document{" +
-                    "ownerId=" + ownerId +
-                    ", firstName='" + firstName + '\'' +
-                    ", lastName='" + lastName + '\'' +
-                    ", petNames=" + pets +
-                    ", keywords=" + keywords +
-                    '}';
-        }
-    }
-
-    static class Pet {
-
-        public Integer id;
-        public String name;
-
-        public Pet(Integer id, String name) {
-            this.id = id;
-            this.name = name;
-        }
-
-        @Override
-        public String toString() {
-            return "Pet{" +
-                    "id=" + id +
-                    ", name='" + name + '\'' +
-                    '}';
-        }
-    }
 }
