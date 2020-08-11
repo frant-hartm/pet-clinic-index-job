@@ -1,7 +1,5 @@
 package org.example.jet.petclinic;
 
-import com.hazelcast.jet.cdc.ParsingException;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -60,7 +58,7 @@ public class OneToManyMapper<T, U> {
         this.mergeFn = mergeFn;
     }
 
-    public T mapState(Long key, Object item) throws ParsingException {
+    public T mapState(Long key, Object item) {
         if (tType.isAssignableFrom(item.getClass())) {
             T one = (T) item;
 
