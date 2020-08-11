@@ -25,7 +25,6 @@ import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -39,7 +38,7 @@ public class PetClinicIndexJob implements Serializable {
     private static final String PETS_TABLE = "pets";
     private static final String VISITS_TABLE = "visits";
 
-    private static final String[] TABLES = {"petclinic.owners", "petclinic.pets", "petclinic.visits"};
+    private static final String[] TABLE_WHITELIST = {"petclinic.owners", "petclinic.pets", "petclinic.visits"};
 
     @Option(names = {"-a", "--database-address"}, description = "database address")
     private String databaseAddress;
@@ -71,7 +70,7 @@ public class PetClinicIndexJob implements Serializable {
                 .setDatabasePassword(databasePassword)
                 .setClusterName(clusterName)
                 .setDatabaseWhitelist(DATABASE)
-                .setTableWhitelist(TABLES)
+                .setTableWhitelist(TABLE_WHITELIST)
                 .build();
 
         ServiceFactory<?, Rake> keywordService = ServiceFactories.sharedService((context) -> new Rake("en"));
@@ -86,13 +85,11 @@ public class PetClinicIndexJob implements Serializable {
                                                 .withoutTimestamps();
 
         var pets = allRecords.filter(table(PETS_TABLE))
-                             .map(change -> (Object) change.value().toObject(Pet.class))
-                             .peek();
+                             .map(change -> (Object) change.value().toObject(Pet.class));
 
         var visits = allRecords.filter(table(VISITS_TABLE))
                                .map(change -> change.value().toObject(Visit.class))
-                               .mapUsingService(keywordService, PetClinicIndexJob::enrichWithKeywords)
-                .peek();
+                               .mapUsingService(keywordService, PetClinicIndexJob::enrichWithKeywords);
 
         StreamStage<Pet> petWithVisits = pets.merge(visits)
                                              .groupingKey(PetClinicIndexJob::getPetId)
@@ -107,14 +104,12 @@ public class PetClinicIndexJob implements Serializable {
 
         allRecords.filter(table(OWNERS_TABLE))
                   .map(change -> (Object) change.value().toObject(Owner.class))
-                  .peek()
                   .merge(petWithVisits)
                   .groupingKey(PetClinicIndexJob::getOwnerId)
                   .mapStateful(
                           () -> new OneToManyMapper<>(Owner.class, Pet.class, Owner::updateFrom, Owner::addPet),
                           OneToManyMapper::mapState
                   )
-                  .peek()
                   .writeTo(elasticSink);
 
         return p;
@@ -165,7 +160,6 @@ public class PetClinicIndexJob implements Serializable {
         }
     }
 
-
     public static class Owner implements Serializable {
 
         public Integer id;
@@ -175,8 +169,10 @@ public class PetClinicIndexJob implements Serializable {
 
         @JsonProperty("last_name")
         public String lastName;
+
         public List<Pet> pets;
 
+        // Used by Json deserialization
         public Owner() {
         }
 

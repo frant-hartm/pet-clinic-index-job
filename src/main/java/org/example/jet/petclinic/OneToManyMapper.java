@@ -9,6 +9,26 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.function.BiConsumer;
 
+/**
+ * Stateful mapper joining objects of One-to-Many relationship together.
+ *
+ * The most common use case is to join records of type T and U, on T's primary key and U's foreign key referencing T's
+ * primary key.
+ *
+ * This implementation is roughly equivalent to a LEFT JOIN, but it could be extended to cover other types of joins as
+ * well.
+ *
+ * Usage:
+ * <pre>{@code StreamStage<Object> ownersAndPets = ...
+ * StreamStage<Owner> owners = ownersAndPets.groupingKey(PetClinicIndexJob::getOwnerId)
+ *   .mapStateful(
+ *     () -> new OneToManyMapper<>(Owner.class, Pet.class),
+ *     OneToManyMapper::mapState
+ *   )}</pre
+ *
+ * @param <T>
+ * @param <U>
+ */
 public class OneToManyMapper<T, U> {
 
     private final Class<?> tType;
@@ -18,8 +38,17 @@ public class OneToManyMapper<T, U> {
     private final BiConsumer<T, U> mergeFn;
 
     Map<Long, T> idToOne = new HashMap<>();
+
+    // Keep many instances for ones, which haven't arrived yet
     Map<Long, Collection<U>> idToMany = new HashMap<>();
 
+    /**
+     *
+     * @param tType "one" type
+     * @param uType "many" type
+     * @param updateOneFn function to update instance of "one" with new version
+     * @param mergeFn join "one" with an instance of "many"
+     */
     public OneToManyMapper(
             Class<?> tType, Class<?> uType,
             BiConsumer<T, T> updateOneFn,
@@ -37,6 +66,7 @@ public class OneToManyMapper<T, U> {
 
             return idToOne.compute(key, (aKey, current) -> {
                 if (current == null) {
+                    // collect accumulated instances of many
                     Collection<U> many = idToMany.getOrDefault(key, Collections.emptyList());
                     for (U oneOfMany : many) {
                         mergeFn.accept(one, oneOfMany);

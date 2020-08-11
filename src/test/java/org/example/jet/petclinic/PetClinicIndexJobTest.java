@@ -11,6 +11,7 @@ import org.elasticsearch.client.RestClient;
 import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.client.indices.CreateIndexRequest;
 import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchHits;
 import org.junit.After;
@@ -23,6 +24,7 @@ import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.output.Slf4jLogConsumer;
 import org.testcontainers.elasticsearch.ElasticsearchContainer;
 
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -55,7 +57,7 @@ public class PetClinicIndexJobTest extends JetTestSupport {
             .withExposedPorts(MYSQL_PORT);
 
     @Rule
-    public ElasticsearchContainer elastic = new ElasticsearchContainer("elasticsearch:7.7.0")
+    public ElasticsearchContainer elastic = new ElasticsearchContainer("elasticsearch:7.8.1")
             .withEnv("discovery.type", "single-node")
             .withEnv("cluster.routing.allocation.disk.threshold_enabled", "false")
             .withExposedPorts(9200);
@@ -81,11 +83,11 @@ public class PetClinicIndexJobTest extends JetTestSupport {
         CreateIndexRequest createIndexRequest = new CreateIndexRequest(PETCLINIC_INDEX);
         createIndexRequest.mapping("{\n" +
                 "  \"properties\": {\n" +
-                "    \"firstName\": {\n" +
+                "    \"first_name\": {\n" +
                 "      \"type\": \"text\",\n" +
                 "      \"copy_to\": \"search\"\n" +
                 "    },\n" +
-                "    \"lastName\": {\n" +
+                "    \"last_name\": {\n" +
                 "      \"type\": \"text\",\n" +
                 "      \"copy_to\": \"search\"\n" +
                 "    " +
@@ -95,7 +97,7 @@ public class PetClinicIndexJobTest extends JetTestSupport {
                 "      \"copy_to\": \"search\"\n" +
                 "    " +
                 "},\n" +
-                "    \"keywords\": {\n" +
+                "    \"pets.visits.keywords\": {\n" +
                 "      \"type\": \"text\",\n" +
                 "      \"copy_to\": \"search\"\n" +
                 "    " +
@@ -154,7 +156,20 @@ public class PetClinicIndexJobTest extends JetTestSupport {
                                    entry("first_name", "George"),
                                    entry("last_name", "Franklin")
                            );
+
+                   assertSingleResult("george");
+                   assertSingleResult("franklin");
                });
+    }
+
+    private void assertSingleResult(String query) throws IOException {
+        SearchResponse search;
+        SearchHits hits;
+        SearchRequest sr = new SearchRequest(PETCLINIC_INDEX);
+        sr.source().query(QueryBuilders.matchQuery("search", query));
+        search = client.search(sr, DEFAULT);
+        hits = search.getHits();
+        assertThat(hits).hasSize(1);
     }
 
     @Test
@@ -184,6 +199,8 @@ public class PetClinicIndexJobTest extends JetTestSupport {
                    assertThat(pet).contains(
                            entry("name", "Leo")
                    );
+
+                   assertSingleResult("leo");
                });
     }
 
@@ -210,6 +227,8 @@ public class PetClinicIndexJobTest extends JetTestSupport {
                    List pets = (List) source.get("pets");
                    List visits = (List) ((Map<String, Object>) pets.get(0)).get("visits");
                    assertThat(visits).isNotEmpty();
+
+                   assertSingleResult("nose");
                });
     }
 
