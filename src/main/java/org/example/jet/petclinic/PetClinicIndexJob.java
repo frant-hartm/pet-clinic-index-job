@@ -94,20 +94,16 @@ public class PetClinicIndexJob implements Serializable {
         StreamStage<Pet> petWithVisits = pets.merge(visits)
                                              .groupingKey(PetClinicIndexJob::getPetId)
                                              .mapStateful(
-                                                     () -> new OneToManyMapper<>(Pet.class,
-                                                             Visit.class,
-                                                             Pet::updateFrom,
-                                                             Pet::addVisit),
+                                                     () -> new OneToManyMapper<>(Pet.class, Visit.class),
                                                      OneToManyMapper::mapState
                                              );
-
 
         allRecords.filter(table(OWNERS_TABLE))
                   .map(change -> (Object) change.value().toObject(Owner.class))
                   .merge(petWithVisits)
                   .groupingKey(PetClinicIndexJob::getOwnerId)
                   .mapStateful(
-                          () -> new OneToManyMapper<>(Owner.class, Pet.class, Owner::updateFrom, Owner::addPet),
+                          () -> new OneToManyMapper<>(Owner.class, Pet.class),
                           OneToManyMapper::mapState
                   )
                   .writeTo(elasticSink);
@@ -160,7 +156,7 @@ public class PetClinicIndexJob implements Serializable {
         }
     }
 
-    public static class Owner implements Serializable {
+    public static class Owner implements Serializable, One<Owner, Pet> {
 
         public Integer id;
 
@@ -182,12 +178,14 @@ public class PetClinicIndexJob implements Serializable {
             this.lastName = lastName;
         }
 
-        public void updateFrom(Owner newOwner) {
-            firstName = newOwner.firstName;
-            lastName = newOwner.lastName;
+        @Override
+        public void update(Owner updatedOne) {
+            firstName = updatedOne.firstName;
+            lastName = updatedOne.lastName;
         }
 
-        public void addPet(Pet newPet) {
+        @Override
+        public void merge(Pet newPet) {
             if (pets == null) {
                 pets = new ArrayList<>();
             }
@@ -212,7 +210,7 @@ public class PetClinicIndexJob implements Serializable {
         }
     }
 
-    static class Pet {
+    static class Pet implements One<Pet, Visit>, Many<Pet> {
 
 
         public Integer id;
@@ -233,15 +231,17 @@ public class PetClinicIndexJob implements Serializable {
             this.ownerId = ownerId;
         }
 
-        public void addVisit(Visit newVisit) {
+        @Override
+        public void update(Pet updatedOne) {
+            this.visits = updatedOne.visits;
+        }
+
+        @Override
+        public void merge(Visit newVisit) {
             if (visits == null) {
                 visits = new ArrayList<>();
             }
             visits.add(newVisit);
-        }
-
-        public void updateFrom(Pet newPet) {
-            this.visits = newPet.visits;
         }
 
         @Override
@@ -254,7 +254,7 @@ public class PetClinicIndexJob implements Serializable {
         }
     }
 
-    static class Visit {
+    static class Visit implements Many<Visit> {
 
         @JsonProperty("pet_id")
         public Integer petId;

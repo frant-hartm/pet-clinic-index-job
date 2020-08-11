@@ -5,7 +5,6 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.function.BiConsumer;
 
 /**
  * Stateful mapper joining objects of One-to-Many relationship together.
@@ -27,13 +26,10 @@ import java.util.function.BiConsumer;
  * @param <T>
  * @param <U>
  */
-public class OneToManyMapper<T, U> {
+public class OneToManyMapper<T extends One<T, U>, U extends Many<U>> {
 
     private final Class<?> tType;
     private final Class<?> uType;
-
-    private final BiConsumer<T, T> updateOneFn;
-    private final BiConsumer<T, U> mergeFn;
 
     Map<Long, T> idToOne = new HashMap<>();
 
@@ -44,18 +40,10 @@ public class OneToManyMapper<T, U> {
      *
      * @param tType "one" type
      * @param uType "many" type
-     * @param updateOneFn function to update instance of "one" with new version
-     * @param mergeFn join "one" with an instance of "many"
      */
-    public OneToManyMapper(
-            Class<?> tType, Class<?> uType,
-            BiConsumer<T, T> updateOneFn,
-            BiConsumer<T, U> mergeFn
-    ) {
+    public OneToManyMapper(Class<T> tType, Class<U> uType) {
         this.tType = tType;
         this.uType = uType;
-        this.updateOneFn = updateOneFn;
-        this.mergeFn = mergeFn;
     }
 
     public T mapState(Long key, Object item) {
@@ -67,7 +55,7 @@ public class OneToManyMapper<T, U> {
                     // collect accumulated instances of many
                     Collection<U> many = idToMany.getOrDefault(key, Collections.emptyList());
                     for (U oneOfMany : many) {
-                        mergeFn.accept(one, oneOfMany);
+                        one.merge(oneOfMany);
                     }
                     idToMany.remove(key);
                     return one;
@@ -76,7 +64,7 @@ public class OneToManyMapper<T, U> {
                 if (current.equals(item)) {
                     return current;
                 } else {
-                    updateOneFn.accept(current, one);
+                    current.update(one);
                     return current;
                 }
             });
@@ -96,7 +84,7 @@ public class OneToManyMapper<T, U> {
                     });
                     return null;
                 } else {
-                    mergeFn.accept(current, oneOfMany);
+                    current.merge(oneOfMany);
                     return current;
                 }
             });

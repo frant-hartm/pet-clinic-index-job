@@ -11,9 +11,8 @@ public class OneToManyMapperTest {
 
     private OneToManyMapper<Owner, Pet> mapper = new OneToManyMapper<>(
             Owner.class,
-            Pet.class,
-            Owner::updateFrom,
-            Owner::addPet);
+            Pet.class
+    );
 
     @Test
     public void when_mapOwner_then_shouldProduceOwner() throws ParsingException {
