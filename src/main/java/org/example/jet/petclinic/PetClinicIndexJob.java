@@ -96,7 +96,7 @@ public class PetClinicIndexJob implements Serializable {
                                              .mapStateful(
                                                      () -> new OneToManyMapper<>(Pet.class,
                                                              Visit.class,
-                                                             Pet::updateFrom,
+                                                             Pet::update,
                                                              Pet::addVisit),
                                                      OneToManyMapper::mapState
                                              );
@@ -170,7 +170,7 @@ public class PetClinicIndexJob implements Serializable {
         @JsonProperty("last_name")
         public String lastName;
 
-        public List<Pet> pets;
+        public List<Pet> pets = new ArrayList<>();
 
         // Used by Json deserialization
         public Owner() {
@@ -182,23 +182,28 @@ public class PetClinicIndexJob implements Serializable {
             this.lastName = lastName;
         }
 
-        public void updateFrom(Owner newOwner) {
-            firstName = newOwner.firstName;
-            lastName = newOwner.lastName;
+        public void updateFrom(Owner other) {
+            pets = new ArrayList<>(other.pets);
         }
 
-        public void addPet(Pet newPet) {
-            if (pets == null) {
-                pets = new ArrayList<>();
-            }
+        public Owner addPet(Pet newPet) {
+            Owner newOwner = new Owner(id, firstName, lastName);
 
+            boolean update = false;
             for (Pet pet : pets) {
                 if (pet.id.equals(newPet.id)) {
-                    pet.name = newPet.name;
-                    return;
+                    newOwner.pets.add(newPet);
+                    update = true;
+                    break;
+                } else {
+                    newOwner.pets.add(pet);
                 }
             }
-            pets.add(newPet);
+
+            if (!update) {
+                newOwner.pets.add(newPet);
+            }
+            return newOwner;
         }
 
         @Override
@@ -212,7 +217,7 @@ public class PetClinicIndexJob implements Serializable {
         }
     }
 
-    static class Pet {
+    static class Pet implements Serializable {
 
 
         public Integer id;
@@ -222,7 +227,7 @@ public class PetClinicIndexJob implements Serializable {
 
         public String name;
 
-        public List<Visit> visits;
+        public List<Visit> visits = new ArrayList<>();
 
         public Pet() {
         }
@@ -233,15 +238,15 @@ public class PetClinicIndexJob implements Serializable {
             this.ownerId = ownerId;
         }
 
-        public void addVisit(Visit newVisit) {
-            if (visits == null) {
-                visits = new ArrayList<>();
-            }
-            visits.add(newVisit);
+        public Pet addVisit(Visit newVisit) {
+            Pet newPet = new Pet(id, name, ownerId);
+            newPet.visits = new ArrayList<>(visits);
+            newPet.visits.add(newVisit);
+            return newPet;
         }
 
-        public void updateFrom(Pet newPet) {
-            this.visits = newPet.visits;
+        public void update(Pet other) {
+            this.visits = new ArrayList<>(other.visits);
         }
 
         @Override
@@ -254,7 +259,7 @@ public class PetClinicIndexJob implements Serializable {
         }
     }
 
-    static class Visit {
+    static class Visit implements Serializable {
 
         @JsonProperty("pet_id")
         public Integer petId;

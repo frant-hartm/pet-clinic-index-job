@@ -1,11 +1,15 @@
 package org.example.jet.petclinic;
 
+import com.hazelcast.function.BiConsumerEx;
+import com.hazelcast.function.BiFunctionEx;
+
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
 
 /**
  * Stateful mapper joining objects of One-to-Many relationship together.
@@ -27,13 +31,13 @@ import java.util.function.BiConsumer;
  * @param <T>
  * @param <U>
  */
-public class OneToManyMapper<T, U> {
+public class OneToManyMapper<T, U> implements Serializable {
 
     private final Class<?> tType;
     private final Class<?> uType;
 
-    private final BiConsumer<T, T> updateOneFn;
-    private final BiConsumer<T, U> mergeFn;
+    private final BiConsumerEx<T, T> updateOneFn;
+    private final BiFunctionEx<T, U, T> mergeFn;
 
     Map<Long, T> idToOne = new HashMap<>();
 
@@ -49,8 +53,8 @@ public class OneToManyMapper<T, U> {
      */
     public OneToManyMapper(
             Class<?> tType, Class<?> uType,
-            BiConsumer<T, T> updateOneFn,
-            BiConsumer<T, U> mergeFn
+            BiConsumerEx<T, T> updateOneFn,
+            BiFunctionEx<T, U, T> mergeFn
     ) {
         this.tType = tType;
         this.uType = uType;
@@ -66,24 +70,22 @@ public class OneToManyMapper<T, U> {
                 if (current == null) {
                     // collect accumulated instances of many
                     Collection<U> many = idToMany.getOrDefault(key, Collections.emptyList());
+                    T newOne = one;
                     for (U oneOfMany : many) {
-                        mergeFn.accept(one, oneOfMany);
+                        newOne = mergeFn.apply(newOne, oneOfMany);
                     }
                     idToMany.remove(key);
-                    return one;
-                }
-
-                if (current.equals(item)) {
-                    return current;
+                    return newOne;
                 } else {
-                    updateOneFn.accept(current, one);
-                    return current;
+                    updateOneFn.accept(one, current);
+                    return one;
                 }
             });
         } else if (uType.isAssignableFrom(item.getClass())) {
             U oneOfMany = (U) item;
             return idToOne.compute(key, (aKey, current) -> {
                 if (current == null) {
+                    // no "one" instance for key, accumulate instances of "many"
                     idToMany.compute(key, (aLong, many) -> {
                         if (many == null) {
                             many = new ArrayList<>();
@@ -94,10 +96,12 @@ public class OneToManyMapper<T, U> {
                             return many;
                         }
                     });
+
+                    // filter out this item (it will be sent later as part of "one")
                     return null;
                 } else {
-                    mergeFn.accept(current, oneOfMany);
-                    return current;
+                    T newOne = mergeFn.apply(current, oneOfMany);
+                    return newOne;
                 }
             });
         } else {
