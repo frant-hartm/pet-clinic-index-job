@@ -104,6 +104,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.3.0</version>
                 <executions>
                     <execution>
                         <phase>package</phase>
@@ -130,7 +131,7 @@
         <profile>
             <!--
             When submitting the job via `jet submit` command these libraries are on classpath so they have provided scope
-            Use this profile when running the job from
+            Use this profile when running the job from IDE
             -->
             <id>ide</id>
             <dependencies>
