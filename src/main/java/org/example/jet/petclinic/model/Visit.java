@@ -2,9 +2,10 @@ package org.example.jet.petclinic.model;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.io.Serializable;
 import java.util.List;
 
-public class Visit {
+public class Visit implements Serializable {
 
     @JsonProperty("pet_id")
     public Integer petId;

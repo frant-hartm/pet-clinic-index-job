@@ -3,6 +3,7 @@ package org.example.jet.petclinic;
 import com.hazelcast.jet.cdc.ChangeRecord;
 import com.hazelcast.jet.cdc.ParsingException;
 import com.hazelcast.jet.cdc.mysql.MySqlCdcSources;
+import com.hazelcast.jet.config.JobConfig;
 import com.hazelcast.jet.elastic.ElasticSinks;
 import com.hazelcast.jet.json.JsonUtil;
 import com.hazelcast.jet.picocli.CommandLine.Option;
@@ -62,9 +63,20 @@ public class PetClinicIndexJob implements Serializable {
     @Option(names = {"-i", "--elastic-index"}, description = "elastic index")
     private String elasticIndex;
 
-    public Pipeline pipeline() {
+    public JobConfig config() {
+        JobConfig jobConfig = new JobConfig();
+        jobConfig.setName("PetClinicIndexJob");
+        jobConfig.addClasspathResource("src/main/resources/data/en.txt", "data/en.txt");
+        jobConfig.addClass(Rake.class);
+        jobConfig.addPackage("picocli");
+        jobConfig.addClass(PetClinicIndexJob.class);
+        jobConfig.addClass(OneToManyMapper.class);
+        return jobConfig;
+    }
+
+    public Pipeline pipeline() throws ParsingException {
         StreamSource<ChangeRecord> mysqlSource = MySqlCdcSources
-                .mysql("mysql-debezium")
+                .mysql("mysql-cdc")
                 .setDatabaseAddress(databaseAddress)
                 .setDatabasePort(databasePort)
                 .setDatabaseUser(databaseUser)

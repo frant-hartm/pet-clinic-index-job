@@ -2,11 +2,11 @@ package org.example.jet.petclinic.model;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
-public class Pet {
-
+public class Pet implements Serializable {
 
     public Integer id;
 
