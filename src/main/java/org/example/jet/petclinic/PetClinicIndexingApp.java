@@ -3,13 +3,10 @@ package org.example.jet.petclinic;
 import com.hazelcast.jet.Jet;
 import com.hazelcast.jet.JetInstance;
 import com.hazelcast.jet.Job;
-import com.hazelcast.jet.config.JobConfig;
 import com.hazelcast.jet.core.JobStatus;
 import com.hazelcast.jet.picocli.CommandLine;
-import com.hazelcast.jet.pipeline.Pipeline;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Logger;
-import org.example.jet.petclinic.rake.Rake;
 
 public class PetClinicIndexingApp {
 

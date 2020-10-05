@@ -15,7 +15,10 @@ public class Pet implements Serializable {
 
     public String name;
 
-    public List<Visit> visits;
+    public List<Visit> visits = new ArrayList<>();
+
+    public Pet() {
+    }
 
     public Pet(Integer id) {
         this.id = id;
@@ -27,16 +30,16 @@ public class Pet implements Serializable {
         this.ownerId = ownerId;
     }
 
-    public void addVisit(Visit newVisit) {
-        if (visits == null) {
-            visits = new ArrayList<>();
-        }
-        visits.add(newVisit);
+    public Pet addVisit(Visit newVisit) {
+        Pet newPet = new Pet(id, name, ownerId);
+        newPet.visits = new ArrayList<>(visits);
+        newPet.visits.add(newVisit);
+        return newPet;
     }
 
-    public void updateFrom(Pet newPet) {
-        this.name = newPet.name;
-        this.ownerId = newPet.ownerId;
+    public Pet update(Pet other) {
+        this.visits = new ArrayList<>(other.visits);
+        return this;
     }
 
     @Override

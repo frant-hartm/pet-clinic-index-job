@@ -2,7 +2,6 @@ package org.example.jet.petclinic;
 
 import com.hazelcast.jet.cdc.ParsingException;
 import org.example.jet.petclinic.model.Owner;
-import org.example.jet.petclinic.PetClinicIndexJob.JoiningState;
 import org.example.jet.petclinic.model.Pet;
 import org.example.jet.petclinic.model.Visit;
 import org.jetbrains.annotations.NotNull;
@@ -18,112 +17,81 @@ public class JoiningStateTest {
     @Test
     public void when_mapOwner_then_shouldProduceOwner() throws ParsingException {
         Owner incomingOwner = new Owner(1, "Jean", "Coleman");
-        Owner outgoingOwner = state.mapState(incomingOwner);
+        Owner outgoingOwner = state.join(incomingOwner);
 
         assertThat(outgoingOwner).isSameAs(incomingOwner);
     }
 
     @Test
     public void when_mapPet_then_shouldProduceNothing() throws ParsingException {
-        Owner outgoingOwner = state.mapState(new Pet(100, "Samantha", 1));
+        Owner outgoingOwner = state.join(new Pet(100, "Samantha", 1));
         assertThat(outgoingOwner).isNull();
     }
 
+    @Test
+    public void when_joinVisit_then_shouldProduceNothing() {
+        Owner outgoingOwner = state.join(new Visit(100, "rabbies shot"));
+        assertThat(outgoingOwner).isNull();
+    }
 
     @Test
     public void mapOwnerAndPetShouldProduceOwnerWithPet() throws ParsingException {
         Owner incomingOwner = new Owner(1, "Jean", "Coleman");
-        state.mapState(incomingOwner);
+        Owner firstOutgoingOwner = state.join(incomingOwner);
 
         Pet pet = new Pet(100, "Samantha", 1);
-        Owner outgoingOwner = state.mapState(pet);
+        Owner outgoingOwner = state.join(pet);
 
+        assertThat(outgoingOwner).isNotSameAs(firstOutgoingOwner);
         assertThat(outgoingOwner.pets).contains(pet);
     }
-
-
-    @Test
-    public void when_mapManyAndOne_then_shouldProduceOneWithMany() throws ParsingException {
-        Pet pet = new Pet(100, "Samantha", 1);
-        state.mapState(pet);
-
-        Owner incoming = new Owner(1, "Jean", "Coleman");
-        Owner outgoing = state.mapState(incoming);
-
-        assertThat(outgoing.pets).contains(pet);
-    }
-
 
     @Test
     public void when_mapOwnerWithPetAndUpdatedOwner_then_shouldProduceUpdatedOwnerWithPets() throws ParsingException {
         Owner incomingOwner = new Owner(1, "Jean", "ColemanColeman");
-        state.mapState(incomingOwner);
+        Owner firstOutgoingOwner = state.join(incomingOwner);
 
         Pet pet = new Pet(100, "Samantha", 1);
-        state.mapState(pet);
+        Owner secondOutgoingOwner = state.join(pet);
 
         Owner updatedOwner = new Owner(1, "Jean", "Coleman");
-        Owner outgoingOwner = state.mapState(updatedOwner);
+        Owner outgoingOwner = state.join(updatedOwner);
+
+        assertThat(outgoingOwner).isNotSameAs(firstOutgoingOwner);
+        assertThat(outgoingOwner).isNotSameAs(secondOutgoingOwner);
 
         assertThat(outgoingOwner.lastName).isEqualTo("Coleman");
         assertThat(outgoingOwner.pets).contains(pet);
     }
 
     @Test
-    public void ashouldMapVisitToDocument() throws Exception {
-
+    public void shouldJoinVisitToOwner() throws Exception {
         Owner ownerRecord = ownerRecord();
 
-        Owner document = state.mapState(ownerRecord);
+        Owner firstOutgoingOwner = state.join(ownerRecord);
 
-        assertThat(document).isNotNull();
-        assertThat(document.firstName).isEqualTo("Jean");
-        assertThat(document.lastName).isEqualTo("Coleman");
-        assertThat(document.id).isEqualTo(6);
-
+        assertThat(firstOutgoingOwner).isNotNull();
+        assertThat(firstOutgoingOwner.firstName).isEqualTo("Jean");
+        assertThat(firstOutgoingOwner.lastName).isEqualTo("Coleman");
+        assertThat(firstOutgoingOwner.id).isEqualTo(6);
 
         Pet petRecord = petRecord();
 
-        document = state.mapState(petRecord);
+        Owner secondOutgoingOwner = state.join(petRecord);
 
-        assertThat(document).isNotNull();
-        assertThat(document.pets).hasSize(1);
-        assertThat(document.pets.get(0).name).isEqualTo("Samantha");
-
-        Visit visitRecord = visitRecord();
-
-        document = state.mapState(visitRecord);
-
-        assertThat(document.pets).isNotEmpty();
-        assertThat(document.pets.get(0).visits).isNotEmpty();
-    }
-
-    @Test
-    public void shouldMapVisitToDocument() throws Exception {
-        JoiningState state = new JoiningState();
+        assertThat(secondOutgoingOwner).isNotNull();
+        assertThat(secondOutgoingOwner.pets).hasSize(1);
+        assertThat(secondOutgoingOwner.pets.get(0).name).isEqualTo("Samantha");
 
         Visit visitRecord = visitRecord();
 
-        Owner owner = state.mapState(visitRecord);
-        assertThat(owner).isNull();
+        Owner outgoingOwner = state.join(visitRecord);
 
-        Owner ownerRecord = ownerRecord();
-        owner = state.mapState(ownerRecord);
+        assertThat(outgoingOwner).isNotSameAs(firstOutgoingOwner);
+        assertThat(outgoingOwner).isNotSameAs(secondOutgoingOwner);
 
-        assertThat(owner).isNotNull();
-        assertThat(owner.firstName).isEqualTo("Jean");
-        assertThat(owner.lastName).isEqualTo("Coleman");
-        assertThat(owner.id).isEqualTo(6);
-        assertThat(owner.pets).isNull();
-
-        Pet petRecord = petRecord();
-
-        owner = state.mapState(petRecord);
-
-        assertThat(owner).isNotNull();
-        assertThat(owner.pets).hasSize(1);
-        assertThat(owner.pets.get(0).name).isEqualTo("Samantha");
-        assertThat(owner.pets.get(0).visits.get(0).keywords).containsExactly("shot");
+        assertThat(outgoingOwner.pets).isNotEmpty();
+        assertThat(outgoingOwner.pets.get(0).visits).isNotEmpty();
     }
 
     @NotNull

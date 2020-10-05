@@ -16,7 +16,7 @@ public class Owner implements Serializable {
     @JsonProperty("last_name")
     public String lastName;
 
-    public List<Pet> pets;
+    public List<Pet> pets = new ArrayList<>();
 
     // Used by Json deserialization
     public Owner() {
@@ -28,23 +28,34 @@ public class Owner implements Serializable {
         this.lastName = lastName;
     }
 
-    public void updateFrom(Owner newOwner) {
-        firstName = newOwner.firstName;
-        lastName = newOwner.lastName;
+    public Owner(Integer ownerId, Pet pet) {
+        this.id = ownerId;
+        pets.add(pet);
     }
 
-    public void addPet(Pet newPet) {
-        if (pets == null) {
-            pets = new ArrayList<>();
-        }
+    public Owner update(Owner other) {
+        pets = new ArrayList<>(other.pets);
+        return this;
+    }
 
+    public Owner addPet(Pet newPet) {
+        Owner newOwner = new Owner(id, firstName, lastName);
+
+        boolean update = false;
         for (Pet pet : pets) {
             if (pet.id.equals(newPet.id)) {
-                pet.name = newPet.name;
-                return;
+                newOwner.pets.add(newPet);
+                update = true;
+                break;
+            } else {
+                newOwner.pets.add(pet);
             }
         }
-        pets.add(newPet);
+
+        if (!update) {
+            newOwner.pets.add(newPet);
+        }
+        return newOwner;
     }
 
     @Override
