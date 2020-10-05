@@ -12,35 +12,34 @@ import static org.assertj.core.util.Lists.newArrayList;
 
 public class JoiningStateTest {
 
-    private JoiningState state = new JoiningState();
+    private OneToManyJoinState<Owner, Pet> state = new OneToManyJoinState<>(
+            Owner.class,
+            Pet.class,
+            Owner::update,
+            Owner::addPet
+    );
 
     @Test
     public void when_mapOwner_then_shouldProduceOwner() throws ParsingException {
         Owner incomingOwner = new Owner(1, "Jean", "Coleman");
-        Owner outgoingOwner = state.join(incomingOwner);
+        Owner outgoingOwner = state.join(1L, incomingOwner);
 
         assertThat(outgoingOwner).isSameAs(incomingOwner);
     }
 
     @Test
     public void when_mapPet_then_shouldProduceNothing() throws ParsingException {
-        Owner outgoingOwner = state.join(new Pet(100, "Samantha", 1));
-        assertThat(outgoingOwner).isNull();
-    }
-
-    @Test
-    public void when_joinVisit_then_shouldProduceNothing() {
-        Owner outgoingOwner = state.join(new Visit(100, "rabbies shot"));
+        Owner outgoingOwner = state.join(1L, new Pet(100, "Samantha", 1));
         assertThat(outgoingOwner).isNull();
     }
 
     @Test
     public void mapOwnerAndPetShouldProduceOwnerWithPet() throws ParsingException {
         Owner incomingOwner = new Owner(1, "Jean", "Coleman");
-        Owner firstOutgoingOwner = state.join(incomingOwner);
+        Owner firstOutgoingOwner = state.join(1L, incomingOwner);
 
         Pet pet = new Pet(100, "Samantha", 1);
-        Owner outgoingOwner = state.join(pet);
+        Owner outgoingOwner = state.join(1L, pet);
 
         assertThat(outgoingOwner).isNotSameAs(firstOutgoingOwner);
         assertThat(outgoingOwner.pets).contains(pet);
@@ -49,13 +48,13 @@ public class JoiningStateTest {
     @Test
     public void when_mapOwnerWithPetAndUpdatedOwner_then_shouldProduceUpdatedOwnerWithPets() throws ParsingException {
         Owner incomingOwner = new Owner(1, "Jean", "ColemanColeman");
-        Owner firstOutgoingOwner = state.join(incomingOwner);
+        Owner firstOutgoingOwner = state.join(1L, incomingOwner);
 
         Pet pet = new Pet(100, "Samantha", 1);
-        Owner secondOutgoingOwner = state.join(pet);
+        Owner secondOutgoingOwner = state.join(1L, pet);
 
         Owner updatedOwner = new Owner(1, "Jean", "Coleman");
-        Owner outgoingOwner = state.join(updatedOwner);
+        Owner outgoingOwner = state.join(1L, updatedOwner);
 
         assertThat(outgoingOwner).isNotSameAs(firstOutgoingOwner);
         assertThat(outgoingOwner).isNotSameAs(secondOutgoingOwner);
@@ -68,7 +67,7 @@ public class JoiningStateTest {
     public void shouldJoinVisitToOwner() throws Exception {
         Owner ownerRecord = ownerRecord();
 
-        Owner firstOutgoingOwner = state.join(ownerRecord);
+        Owner firstOutgoingOwner = state.join(6L, ownerRecord);
 
         assertThat(firstOutgoingOwner).isNotNull();
         assertThat(firstOutgoingOwner.firstName).isEqualTo("Jean");
@@ -77,21 +76,11 @@ public class JoiningStateTest {
 
         Pet petRecord = petRecord();
 
-        Owner secondOutgoingOwner = state.join(petRecord);
+        Owner secondOutgoingOwner = state.join(6L, petRecord);
 
         assertThat(secondOutgoingOwner).isNotNull();
         assertThat(secondOutgoingOwner.pets).hasSize(1);
         assertThat(secondOutgoingOwner.pets.get(0).name).isEqualTo("Samantha");
-
-        Visit visitRecord = visitRecord();
-
-        Owner outgoingOwner = state.join(visitRecord);
-
-        assertThat(outgoingOwner).isNotSameAs(firstOutgoingOwner);
-        assertThat(outgoingOwner).isNotSameAs(secondOutgoingOwner);
-
-        assertThat(outgoingOwner.pets).isNotEmpty();
-        assertThat(outgoingOwner.pets.get(0).visits).isNotEmpty();
     }
 
     @NotNull
@@ -104,10 +93,4 @@ public class JoiningStateTest {
         return new Pet(7, "Samantha", 6);
     }
 
-    @NotNull
-    private Visit visitRecord() {
-        Visit visit = new Visit(7, "rabies shot");
-        visit.setKeywords(newArrayList("shot"));
-        return visit;
-    }
 }

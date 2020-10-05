@@ -1,7 +1,7 @@
 package org.example.jet.petclinic;
 
+import com.hazelcast.function.PredicateEx;
 import com.hazelcast.jet.cdc.ChangeRecord;
-import com.hazelcast.jet.cdc.ParsingException;
 import com.hazelcast.jet.cdc.mysql.MySqlCdcSources;
 import com.hazelcast.jet.config.JobConfig;
 import com.hazelcast.jet.elastic.ElasticSinks;
@@ -12,6 +12,7 @@ import com.hazelcast.jet.pipeline.ServiceFactories;
 import com.hazelcast.jet.pipeline.ServiceFactory;
 import com.hazelcast.jet.pipeline.Sink;
 import com.hazelcast.jet.pipeline.StreamSource;
+import com.hazelcast.jet.pipeline.StreamStage;
 import org.apache.http.HttpHost;
 import org.elasticsearch.action.DocWriteRequest;
 import org.elasticsearch.action.update.UpdateRequest;
@@ -25,7 +26,6 @@ import org.example.jet.petclinic.rake.Rake;
 import java.io.Serializable;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -69,6 +69,7 @@ public class PetClinicIndexJob implements Serializable {
         jobConfig.addClass(Rake.class);
         jobConfig.addPackage("picocli");
         jobConfig.addClass(PetClinicIndexJob.class);
+        jobConfig.addClass(OneToManyJoinState.class);
         return jobConfig;
     }
 
@@ -92,46 +93,42 @@ public class PetClinicIndexJob implements Serializable {
         );
 
         Pipeline p = Pipeline.create();
-        p.readFrom(mysqlSource)
-         .withoutTimestamps()
-         .map(PetClinicIndexJob::mapChangeRecordToPOJO).setName("mapChangeRecordToPOJO")
-         .mapUsingService(keywordService, PetClinicIndexJob::enrichWithKeywords).setName("enrichWithKeywords")
-         .mapStateful(JoiningState::new, JoiningState::join).setName("JoiningState::join")
-         .writeTo(elasticSink);
+        StreamStage<ChangeRecord> allRecords = p.readFrom(mysqlSource)
+                                                .withoutTimestamps();
+
+        var pets = allRecords.filter(table(PETS_TABLE))
+                             .map(change -> (Object) change.value().toObject(Pet.class));
+
+        var visits = allRecords.filter(table(VISITS_TABLE))
+                               .map(change -> change.value().toObject(Visit.class))
+                               .mapUsingService(keywordService, PetClinicIndexJob::enrichWithKeywords);
+
+        StreamStage<Pet> petWithVisits = pets.merge(visits)
+                                             .groupingKey(PetClinicIndexJob::getPetId)
+                                             .mapStateful(
+                                                     () -> new OneToManyJoinState<>(Pet.class,
+                                                             Visit.class,
+                                                             Pet::update,
+                                                             Pet::addVisit),
+                                                     OneToManyJoinState::join
+                                             );
+
+
+        allRecords.filter(table(OWNERS_TABLE))
+                  .map(change -> (Object) change.value().toObject(Owner.class))
+                  .merge(petWithVisits)
+                  .groupingKey(PetClinicIndexJob::getOwnerId)
+                  .mapStateful(
+                          () -> new OneToManyJoinState<>(Owner.class, Pet.class, Owner::update, Owner::addPet),
+                          OneToManyJoinState::join
+                  )
+                  .writeTo(elasticSink);
 
         return p;
     }
 
-    private static Object mapChangeRecordToPOJO(ChangeRecord change) throws ParsingException {
-        Map<String, Object> changeMap = change.value().toMap();
-
-        switch (change.table()) {
-            case OWNERS_TABLE: {
-                Integer ownerId = (Integer) changeMap.get("id");
-                String firstName = (String) changeMap.get("first_name");
-                String lastName = (String) changeMap.get("last_name");
-
-                return new Owner(ownerId, firstName, lastName);
-            }
-
-            case PETS_TABLE: {
-                Integer petId = (Integer) changeMap.get("id");
-                String name = (String) changeMap.get("name");
-                Integer ownerId = (Integer) changeMap.get("owner_id");
-
-                return new Pet(petId, name, ownerId);
-            }
-
-            case VISITS_TABLE:
-                Integer petId = (Integer) changeMap.get("pet_id");
-                String description = (String) changeMap.get("description");
-
-                return new Visit(petId, description);
-
-            default:
-                throw new IllegalStateException("Unknown table " + change.table());
-        }
-
+    private static PredicateEx<ChangeRecord> table(String table) {
+        return (changeRecord) -> changeRecord.table().equals(table);
     }
 
     private static Object enrichWithKeywords(Rake service, Object item) {
@@ -156,4 +153,28 @@ public class PetClinicIndexJob implements Serializable {
                 .docAsUpsert(true);
     }
 
+
+    private static Long getPetId(Object o) {
+        if (o instanceof Pet) {
+            Pet pet = (Pet) o;
+            return Long.valueOf(pet.id);
+        } else if (o instanceof Visit) {
+            Visit visit = (Visit) o;
+            return Long.valueOf(visit.petId);
+        } else {
+            throw new IllegalArgumentException("Unknown type " + o.getClass());
+        }
+    }
+
+    private static Long getOwnerId(Object o) {
+        if (o instanceof Owner) {
+            Owner owner = (Owner) o;
+            return Long.valueOf(owner.id);
+        } else if (o instanceof Pet) {
+            Pet pet = (Pet) o;
+            return Long.valueOf(pet.ownerId);
+        } else {
+            throw new IllegalArgumentException("Unknown type " + o.getClass());
+        }
+    }
 }
