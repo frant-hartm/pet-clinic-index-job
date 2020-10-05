@@ -65,7 +65,7 @@ public class PetClinicIndexJob implements Serializable {
     public JobConfig config() {
         JobConfig jobConfig = new JobConfig();
         jobConfig.setName("PetClinicIndexJob");
-        jobConfig.addClasspathResource("src/main/resources/data/en.txt", "data/en.txt");
+        jobConfig.addClasspathResource(PetClinicIndexJob.class.getResource("/data/en.txt"), "data/en.txt");
         jobConfig.addClass(Rake.class);
         jobConfig.addPackage("picocli");
         jobConfig.addClass(PetClinicIndexJob.class);
