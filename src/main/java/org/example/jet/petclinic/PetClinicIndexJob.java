@@ -88,7 +88,7 @@ public class PetClinicIndexJob implements Serializable {
 
         Sink<Owner> elasticSink = ElasticSinks.elastic(
                 () -> RestClient.builder(HttpHost.create(elasticHost)),
-                this::mapDocumentToElasticRequest
+                this::mapOwnerToElasticRequest
         );
 
         Pipeline p = Pipeline.create();
@@ -150,9 +150,9 @@ public class PetClinicIndexJob implements Serializable {
         return item;
     }
 
-    private DocWriteRequest<?> mapDocumentToElasticRequest(Owner document) throws Exception {
-        return new UpdateRequest(elasticIndex, document.id.toString())
-                .doc(JsonUtil.toJson(document), XContentType.JSON)
+    private DocWriteRequest<?> mapOwnerToElasticRequest(Owner owner) throws Exception {
+        return new UpdateRequest(elasticIndex, owner.id.toString())
+                .doc(JsonUtil.toJson(owner), XContentType.JSON)
                 .docAsUpsert(true);
     }
 
