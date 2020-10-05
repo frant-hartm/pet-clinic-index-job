@@ -57,7 +57,7 @@ public class PetClinicIndexJobTest extends JetTestSupport {
             .withExposedPorts(MYSQL_PORT);
 
     @Rule
-    public ElasticsearchContainer elastic = new ElasticsearchContainer("elasticsearch:7.8.1")
+    public ElasticsearchContainer elastic = new ElasticsearchContainer("elasticsearch:7.9.2")
             .withEnv("discovery.type", "single-node")
             .withEnv("cluster.routing.allocation.disk.threshold_enabled", "false")
             .withExposedPorts(9200);

@@ -86,7 +86,7 @@ public class PetClinicIndexJob implements Serializable {
          .withoutTimestamps()
          .map(PetClinicIndexJob::mapChangeRecordToPOJO).setName("mapChangeRecordToPOJO")
          .mapUsingService(keywordService, PetClinicIndexJob::enrichWithKeywords).setName("enrichWithKeywords")
-         .mapStateful(OwnerMappingState::new, OwnerMappingState::mapState).setName("OwnerMappingState::mapState")
+         .mapStateful(JoiningState::new, JoiningState::mapState).setName("OwnerMappingState::mapState")
          .writeTo(elasticSink);
 
         return p;
@@ -146,7 +146,7 @@ public class PetClinicIndexJob implements Serializable {
                 .docAsUpsert(true);
     }
 
-    static class OwnerMappingState implements Serializable {
+    static class JoiningState implements Serializable {
 
         Map<Integer, Owner> ownerMap = new HashMap<>();
         Map<Integer, Owner> petMap = new HashMap<>();

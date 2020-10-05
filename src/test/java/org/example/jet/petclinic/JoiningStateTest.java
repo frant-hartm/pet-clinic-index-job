@@ -2,7 +2,7 @@ package org.example.jet.petclinic;
 
 import com.hazelcast.jet.cdc.ParsingException;
 import org.example.jet.petclinic.model.Owner;
-import org.example.jet.petclinic.PetClinicIndexJob.OwnerMappingState;
+import org.example.jet.petclinic.PetClinicIndexJob.JoiningState;
 import org.example.jet.petclinic.model.Pet;
 import org.example.jet.petclinic.model.Visit;
 import org.jetbrains.annotations.NotNull;
@@ -11,9 +11,9 @@ import org.junit.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.util.Lists.newArrayList;
 
-public class OwnerMappingStateTest {
+public class JoiningStateTest {
 
-    private OwnerMappingState state = new OwnerMappingState();
+    private JoiningState state = new JoiningState();
 
     @Test
     public void when_mapOwner_then_shouldProduceOwner() throws ParsingException {
@@ -100,7 +100,7 @@ public class OwnerMappingStateTest {
 
     @Test
     public void shouldMapVisitToDocument() throws Exception {
-        OwnerMappingState state = new OwnerMappingState();
+        JoiningState state = new JoiningState();
 
         Visit visitRecord = visitRecord();
 
